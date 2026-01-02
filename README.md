@@ -20,7 +20,7 @@ Other Python packages can be installed by running the following command from the
 `
 pip install -r requirements.txt
 `
-The checkpoints you need to download: (https://drive.google.com/file/d/1HkhMC_SBRz57puNTN9MqCz-Vut5OzvSA/view?usp=sharing)
+The checkpoints you need to download: ([https://drive.google.com/file/d/1HkhMC_SBRz57puNTN9MqCz-Vut5OzvSA/view?usp=sharing](https://drive.google.com/drive/folders/189VY65I_n4RTpQnmLGj7IzVnOF6dmePC))
 
 ## Datasets and victim models download
 
