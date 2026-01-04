@@ -12,16 +12,27 @@ from PIL import Image
 # from torchvision.transforms.functional import InterpolationMode
 # from torch.nn.functional import interpolate # torch 2.0.1
 
-# cap_ = dset.CocoCaptions(root = '/home/jiyli/Data/Image_Attack/data/test2014',
-#                         annFile = '/home/jiyli/Data/Image_Attack/data/annotations/image_info_test2014.json',
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+COCO_DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+COCO_TRAIN_DIR = os.path.join(COCO_DATA_DIR, "train2014")
+COCO_ANN_DIR = os.path.join(COCO_DATA_DIR, "annotations")
+COCO_TRAIN_ANN = os.path.join(COCO_ANN_DIR, "captions_train2014.json")
+COCO_TEST_DIR = os.path.join(COCO_DATA_DIR, "test2014")
+COCO_TEST_ANN = os.path.join(COCO_ANN_DIR, "image_info_test2014.json")
+CAPTIONATTACK_DIR = os.path.join(PROJECT_ROOT, "captionattack")
+FLICKR8K_CAPTIONS = os.path.join(CAPTIONATTACK_DIR, "Flickr8k.token.txt")
+FLICKR8K_IMAGE_DIR = os.path.join(CAPTIONATTACK_DIR, "Flicker8k_Dataset")
+
+# cap_ = dset.CocoCaptions(root = COCO_TEST_DIR,
+#                         annFile = COCO_TEST_ANN,
 #                         transform=transforms.Compose([
 #                         transforms.Resize(size=(255, 255))]))
-cap = dset.CocoCaptions(root = '/home/jiyli/Data/Image_Attack/data/train2014',
-                        annFile = '/home/jiyli/Data/Image_Attack/data/annotations/captions_train2014.json',
+cap = dset.CocoCaptions(root = COCO_TRAIN_DIR,
+                        annFile = COCO_TRAIN_ANN,
                         transform=transforms.Compose([
                         transforms.Resize(size=(255, 255))]))
-# cap_flicker8k = dset.Flickr8k(root = '/home/jiyli/Data/Image_Attack/captionattack/Flicker8k_Dataset',
-#                         ann_file = '/home/jiyli/Data/Image_Attack/captionattack/Flickr8k_text/Flickr8k.token.txt',
+# cap_flicker8k = dset.Flickr8k(root = FLICKR8K_IMAGE_DIR,
+#                         ann_file = os.path.join(CAPTIONATTACK_DIR, "Flickr8k_text", "Flickr8k.token.txt"),
 #                         transform=transforms.Compose([
 #                         transforms.Resize(size=(255, 255))]))
 
@@ -50,8 +61,8 @@ def get_flickr8k_dataset_for_sat(id, for_attention=False):
 
 def get_flickr8k_dataset_for_sat(id):
     # Read captions file
-    captions_file='/home/jiyli/Data/Image_Attack/captionattack/Flickr8k.token.txt'
-    image_dir='/home/jiyli/Data/Image_Attack/captionattack/Flicker8k_Dataset'
+    captions_file = FLICKR8K_CAPTIONS
+    image_dir = FLICKR8K_IMAGE_DIR
     with open(captions_file, 'r') as f:
         captions_data = f.readlines()
 
@@ -87,8 +98,8 @@ def get_flickr8k_dataset_for_sat(id):
 
 def get_flickr8k_dataset(id):
     # Read captions file
-    captions_file='/home/jiyli/Data/Image_Attack/captionattack/Flickr8k.token.txt'
-    image_dir='/home/jiyli/Data/Image_Attack/captionattack/Flicker8k_Dataset'
+    captions_file = FLICKR8K_CAPTIONS
+    image_dir = FLICKR8K_IMAGE_DIR
     with open(captions_file, 'r') as f:
         captions_data = f.readlines()
 

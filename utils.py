@@ -59,7 +59,7 @@ def load_image_for_sat(id, image_size, device, before=True, dataset='flicker8k')
     '''
     if dataset == 'coco':
         # _, _, raw_image = get_coco_dataset_for_sat(id)
-        folder_path = '/home/jiyli/Data/Image_Attack/data/train2014'
+        folder_path = COCO_TRAIN_DIR
         files = os.listdir(folder_path)
         files = sorted(files)
         img = imread(folder_path + '/' + str(files[id]))
@@ -80,8 +80,8 @@ def load_image_for_sat(id, image_size, device, before=True, dataset='flicker8k')
             img = torch.from_numpy(img)
     if dataset == 'flicker8k':
         # Read captions file
-        captions_file='/home/jiyli/Data/Image_Attack/captionattack/Flickr8k.token.txt'
-        image_dir='/home/jiyli/Data/Image_Attack/captionattack/Flicker8k_Dataset'
+        captions_file = FLICKR8K_CAPTIONS
+        image_dir = FLICKR8K_IMAGE_DIR
         with open(captions_file, 'r') as f:
             captions_data = f.readlines()
 
@@ -186,12 +186,12 @@ def image_path(id, dataset='coco'):
     return image path
     '''
     if dataset=='coco':
-        folder_path = '/home/jiyli/Data/Image_Attack/data/train2014'
+        folder_path = COCO_TRAIN_DIR
         files = os.listdir(folder_path)
         files = sorted(files)
         return folder_path + '/' + str(files[id])
     if dataset == 'flicker8k':
-        image_dir = '/home/jiyli/Data/Image_Attack/captionattack/Flicker8k_Dataset'
+        image_dir = FLICKR8K_IMAGE_DIR
         image_filenames = sorted(os.listdir(image_dir))
         if 0 <= id < len(image_filenames):
             image_filename = image_filenames[id]
