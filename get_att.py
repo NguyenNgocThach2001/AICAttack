@@ -18,13 +18,37 @@ import matplotlib.pyplot as plt
 import numpy as np
 import skimage.transform
 import warnings
+from pathlib import Path
 
 # This code snippet requires a python 3.6 and pytorch 1.6 with torchvision 0.7.0
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 warnings.filterwarnings('ignore')
 
-def caption_image_beam_search(encoder, decoder, word_map, image_path=None, beam_size=3):
+CHECKPOINT_DIR = Path("checkpoint")
+CHECKPOINT_FILE = CHECKPOINT_DIR / "BEST_checkpoint_coco_5_cap_per_img_5_min_word_freq.pth.tar"
+WORDMAP_FILE = CHECKPOINT_DIR / "WORDMAP_coco_5_cap_per_img_5_min_word_freq.json"
+OUTPUT_DIR = Path("outputs")
+FIGURE_DIR = OUTPUT_DIR / "figure"
+
+DEFAULT_BEAM_SIZE = 5
+DEFAULT_MAX_CAPTION_LENGTH = 50
+DEFAULT_VIS_GRID_SIZE = 14
+DEFAULT_VIS_UPSCALE = 24
+DEFAULT_VIS_SMOOTH_SIGMA = 8
+DEFAULT_VISUALIZE_IMAGE_SIZE = 255
+DEFAULT_ALPHA_SIZE = 384
+DEFAULT_SAMPLE_COUNT = 1000
+DEFAULT_SAMPLE_RANGE = 8000
+
+def caption_image_beam_search(
+    encoder,
+    decoder,
+    word_map,
+    image_path=None,
+    beam_size=DEFAULT_BEAM_SIZE,
+    image_size=DEFAULT_VISUALIZE_IMAGE_SIZE,
+):
 
     """
     Reads an image and captions it with beam search.
@@ -46,7 +70,7 @@ def caption_image_beam_search(encoder, decoder, word_map, image_path=None, beam_
         if len(img.shape) == 2:
             img = img[:, :, np.newaxis]
             img = np.concatenate([img, img, img], axis=2)
-        img = imresize(img, (255, 255))
+        img = imresize(img, (image_size, image_size))
         img = img.transpose(2, 0, 1)
         img = img / 255.
         img = torch.FloatTensor(img).to(device)
@@ -175,37 +199,47 @@ def visualize_att(image_path, seq, alphas, rev_word_map, smooth=True):
     :param smooth: smooth weights?
     """
     image = Image.open(image_path)
-    image = image.resize([14 * 24, 14 * 24], Image.LANCZOS)
+    image = image.resize(
+        [DEFAULT_VIS_GRID_SIZE * DEFAULT_VIS_UPSCALE, DEFAULT_VIS_GRID_SIZE * DEFAULT_VIS_UPSCALE],
+        Image.LANCZOS,
+    )
 
     words = [rev_word_map[ind] for ind in seq]
 
     for t in range(len(words)):
-        if t > 50:
+        if t > DEFAULT_MAX_CAPTION_LENGTH:
             break
-        plt.subplot(np.ceil(len(words) / 5.), 5, t + 1)
+        plt.subplot(np.ceil(len(words) / 5.0), 5, t + 1)
 
         plt.text(0, 1, '%s' % (words[t]), color='black', backgroundcolor='white', fontsize=12)
         plt.imshow(image)
         current_alpha = alphas[t, :]
         if smooth:
-            alpha = skimage.transform.pyramid_expand(current_alpha.numpy(), upscale=24, sigma=8)
+            alpha = skimage.transform.pyramid_expand(
+                current_alpha.numpy(),
+                upscale=DEFAULT_VIS_UPSCALE,
+                sigma=DEFAULT_VIS_SMOOTH_SIGMA,
+            )
         else:
-            alpha = skimage.transform.resize(current_alpha.numpy(), [14 * 24, 14 * 24])
+            alpha = skimage.transform.resize(
+                current_alpha.numpy(),
+                [DEFAULT_VIS_GRID_SIZE * DEFAULT_VIS_UPSCALE, DEFAULT_VIS_GRID_SIZE * DEFAULT_VIS_UPSCALE],
+            )
         if t == 0:
             plt.imshow(alpha, alpha=0)
         else:
             plt.imshow(alpha, alpha=0.8)
         plt.set_cmap(cm.Greys_r)
         plt.axis('off')
-    plt.savefig('outputs/figure/attention_1.png')
+    FIGURE_DIR.mkdir(parents=True, exist_ok=True)
+    plt.savefig(FIGURE_DIR / "attention_1.png")
 
 def get_alphas(id, dataset='coco'):
     """
     Call the pretrained 'Show and tell' model for attention value
     return predicted captions and alphas value corresponding to every words
     """
-    checkpoint_path = 'checkpoint/BEST_checkpoint_coco_5_cap_per_img_5_min_word_freq.pth.tar'
-    checkpoint = torch.load(checkpoint_path, map_location=str(device))
+    checkpoint = torch.load(CHECKPOINT_FILE, map_location=str(device))
     decoder = checkpoint['decoder']
     decoder = decoder.to(device)
     decoder.eval()
@@ -213,15 +247,25 @@ def get_alphas(id, dataset='coco'):
     encoder = encoder.to(device)
     encoder.eval()
 
-    with open('checkpoint/WORDMAP_coco_5_cap_per_img_5_min_word_freq.json', 'r') as j:
+    with open(WORDMAP_FILE, 'r') as j:
         word_map = json.load(j)
     rev_word_map = {v: k for k, v in word_map.items()}  # ix2word
 
-    seq, alphas = caption_image_beam_search(encoder, decoder, word_map, image_path=image_path(id,dataset=dataset), beam_size=5)
+    seq, alphas = caption_image_beam_search(
+        encoder,
+        decoder,
+        word_map,
+        image_path=image_path(id, dataset=dataset),
+        beam_size=DEFAULT_BEAM_SIZE,
+    )
     alphas = torch.FloatTensor(alphas)
     alphas = alphas[1:-1 : ]
     # i = skimage.transform.resize(alphas[2].numpy(), [384, 384])
-    alpha_resized = F.interpolate(alphas.unsqueeze(0), size=(384, 384), mode='bilinear').squeeze()
+    alpha_resized = F.interpolate(
+        alphas.unsqueeze(0),
+        size=(DEFAULT_ALPHA_SIZE, DEFAULT_ALPHA_SIZE),
+        mode='bilinear',
+    ).squeeze()
     # alpha = skimage.transform.resize(current_alpha.numpy(), [14 * 24, 14 * 24])
     # Get words:
     words = [rev_word_map[ind] for ind in seq]
@@ -233,7 +277,7 @@ if __name__ == '__main__':
 
   
     # Visualise attention.
-    checkpoint = torch.load('checkpoint/BEST_checkpoint_coco_5_cap_per_img_5_min_word_freq.pth.tar', map_location=str(device))
+    checkpoint = torch.load(CHECKPOINT_FILE, map_location=str(device))
     decoder = checkpoint['decoder']
     decoder = decoder.to(device)
     decoder.eval()
@@ -242,7 +286,7 @@ if __name__ == '__main__':
     encoder.eval()
 
     # Load word map (word2ix)
-    with open('checkpoint/WORDMAP_coco_5_cap_per_img_5_min_word_freq.json', 'r') as j:
+    with open(WORDMAP_FILE, 'r') as j:
         word_map = json.load(j)
     rev_word_map = {v: k for k, v in word_map.items()}  # ix2word
 
@@ -254,15 +298,19 @@ if __name__ == '__main__':
     # visualize_att(image_path(7), seq, alphas, rev_word_map, smooth=False)
    
 
-    num_input = 1000
+    num_samples = DEFAULT_SAMPLE_COUNT
     attens = []
     random.seed(42)
-    ids = random.sample(range(8000), num_input)
+    dataset_name = 'coco'
+    ids = random.sample(range(DEFAULT_SAMPLE_RANGE), num_samples)
     for i in ids:
-        attens.append((i, get_alphas(i,dataset='flicker8k')))
+        attens.append((i, get_alphas(i, dataset=dataset_name)))
         print(f'No.{i}')
     # Open the file in write mode
-    with open(f"attens_flicker8k_{num_input}samples_384.json", "wb") as file:
+    output_filename = (
+        f"attens_{dataset_name}_{num_samples}_samples_{DEFAULT_ALPHA_SIZE}.json"
+    )
+    with open(output_filename, "wb") as file:
         # Write the data to the file
         pickle.dump(attens, file)
 
