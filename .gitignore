@@ -5,3 +5,10 @@ models/SAT/*
 outputs/attens_flicker8k_1000_samples_384.pkl 
 outputs/predicted_captions.csv
 checkpoint/*
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
