@@ -1,14 +1,24 @@
-data/coco/annotations/
-data/coco/images/
-data/flickr8k/
-models/SAT/
-outputs/attens_flicker8k_1000_samples_384.pkl 
-outputs/predicted_captions.csv
+# Ignore all files in these folders
+data/coco/annotations/*
+!data/coco/annotations/.gitkeep
+
+data/coco/images/*
+!data/coco/images/.gitkeep
+
+data/flickr8k/*
+!data/flickr8k/.gitkeep
+
+models/SAT/*
+!models/SAT/.gitkeep
+
 checkpoint/*
+!checkpoint/.gitkeep
 
 # Python cache
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
+
+# Other outputs
+outputs/attens_flicker8k_1000_samples_384.pkl 
+outputs/predicted_captions.csv
