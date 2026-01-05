@@ -1,138 +1,188 @@
 import torch
 import os
+from pathlib import Path
 import pickle
 from PIL import Image, ImageDraw
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import sys
-if sys.version_info.minor != 8:
-    from scipy.misc import imread, imresize
-if sys.version_info.minor == 8:
-    from torchvision.transforms.functional import InterpolationMode  # for python 3.8, pytorch 2.0.1
+import imageio
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from PIL import Image
 import requests
 from coco import *
-# from dataloader import *
 
-
+# ===== DEVICE CONFIGURATION =====
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def load_image(id, image_size, device, before=True, dataset='coco'):
+# ===== DIRECTORY CONSTANTS =====
+OUTPUT_DIR = Path('outputs')
+OUT_BLIP_FLICKER8K = OUTPUT_DIR / 'blip_flicker8k_1000p..._overall_384_attacked'
+OUT_DEMO_PAPER = OUTPUT_DIR / 'demo_paper'
+OUT_SEPARATE_TEST = OUTPUT_DIR / 'separate_test_500p_lm'
+OUT_SEPARATE_COMBINED = OUTPUT_DIR / 'separate_combined_img'
 
-    '''
-    input an pil.image the function will convert it into 
-    image tensor range [0, 255] or [-1. 1]
-    '''
-    if dataset =='coco':
+# ===== IMAGE SAVING CONSTANTS =====
+BLIP_ATTACK_OUTPUT_DIR = OUTPUT_DIR / 'blip_flicker8k_1000p_100samples_overall_384_attacked'
+ALPHAS_FILE = Path('alphas.txt')
+
+# ===== IMAGE SIZE CONSTANTS =====
+DEFAULT_IMAGE_SIZE = 384
+SAT_IMAGE_SIZE = 255
+
+# ===== NORMALIZATION CONSTANTS =====
+CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
+CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+IMAGENET_STD = [0.229, 0.224, 0.225]
+
+
+def ensure_dir_exists(directory: Path) -> Path:
+    """
+    Ensure that a directory exists, create it if it doesn't.
+    
+    Args:
+        directory: Path object representing the directory
+        
+    Returns:
+        Path object of the created/existing directory
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def load_image(id, image_size, device, before=True, dataset='coco'):
+    """
+    Load and transform an image from specified dataset.
+    
+    Args:
+        id: Image ID/index
+        image_size: Target size for image resize
+        device: Torch device (cuda/cpu)
+        before: If True, return tensor in [0,255] range, else [-1,1] normalized
+        dataset: Dataset name ('coco' or 'flicker8k')
+        
+    Returns:
+        Transformed image tensor
+    """
+    if dataset == 'coco':
         _, _, raw_image = get_coco_dataset(id)
-    if dataset =='flicker8k':
-        _,_, raw_image = flickr8k_dataset(id)
+    elif dataset == 'flicker8k':
+        _, _, raw_image = get_flickr8k_dataset(id)
+    else:
+        raise ValueError(f"Unknown dataset: {dataset}")
+    
     # Transform image to tensor [0, 255]
     transform_pil_tensor = transforms.Compose([
-        transforms.Resize((image_size,image_size),interpolation=InterpolationMode.BICUBIC),
+        transforms.Resize((image_size, image_size), interpolation=InterpolationMode.BICUBIC),
         transforms.PILToTensor(),
-        ])
+    ])
 
     # Transform image to tensor [-1, 1]
     transform_tensor = transforms.Compose([
-        transforms.Resize((image_size,image_size),interpolation=InterpolationMode.BICUBIC),
+        transforms.Resize((image_size, image_size), interpolation=InterpolationMode.BICUBIC),
         transforms.ToTensor(),
-        transforms.Normalize
-        ((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
+        transforms.Normalize(CLIP_MEAN, CLIP_STD)
     ])
 
-    if before== True:
-        image = transform_pil_tensor(raw_image).to(device) 
+    if before:
+        image = transform_pil_tensor(raw_image).to(device)
     else:
-        image = transform_tensor(raw_image).unsqueeze(0).to(device) 
+        image = transform_tensor(raw_image).unsqueeze(0).to(device)
 
     return image
 
 
 def load_image_for_sat(id, image_size, device, before=True, dataset='flicker8k'):
-
-    '''
-    input an pil.image the function will convert it into 
-    image tensor range [0, 255] or [-1. 1]
-    '''
+    """
+    Load image for SAT (Show, Attend and Tell) model.
+    
+    Args:
+        id: Image ID/index
+        image_size: Target size for image resize
+        device: Torch device (cuda/cpu)
+        before: If True, return raw tensor, else normalized
+        dataset: Dataset name ('coco' or 'flicker8k')
+        
+    Returns:
+        Transformed image tensor
+    """
     if dataset == 'coco':
-        # _, _, raw_image = get_coco_dataset_for_sat(id)
-        folder_path = '/home/jiyli/Data/Image_Attack/data/train2014'
-        files = os.listdir(folder_path)
-        files = sorted(files)
-        img = imread(folder_path + '/' + str(files[id]))
+        folder_path = COCO_TRAIN_IMAGES_DIR
+        files = sorted(os.listdir(folder_path))
+        img = imread(str(folder_path / files[id]))
+        
         if len(img.shape) == 2:
             img = img[:, :, np.newaxis]
             img = np.concatenate([img, img, img], axis=2)
-        img = imresize(img, (255, 255))
+        
+        img = imresize(img, (SAT_IMAGE_SIZE, SAT_IMAGE_SIZE))
         img = img.transpose(2, 0, 1)
+        
         if not before:
             img = img / 255.
             img = torch.FloatTensor(img).to(device)
-        
-            normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                            std=[0.229, 0.224, 0.225])
+            normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
             transform = transforms.Compose([normalize])
-            img = transform(img)  # (3, image_size, image_size)
+            img = transform(img)
         else:
             img = torch.from_numpy(img)
-    if dataset == 'flicker8k':
-        # Read captions file
-        captions_file='/home/jiyli/Data/Image_Attack/captionattack/Flickr8k.token.txt'
-        image_dir='/home/jiyli/Data/Image_Attack/captionattack/Flicker8k_Dataset'
+            
+    elif dataset == 'flicker8k':
+        captions_file = FLICKR8K_CAPTIONS_FILE
+        image_dir = FLICKR8K_IMAGE_DIR
+        
         with open(captions_file, 'r') as f:
             captions_data = f.readlines()
 
-        # Create a dictionary to store captions
         captions_dict = {}
         for line in captions_data:
             parts = line.strip().split('\t')
-            image_name = parts[0].split('#')[0]  # Extract image name without #x
+            image_name = parts[0].split('#')[0]
             caption = parts[1]
             if image_name not in captions_dict:
                 captions_dict[image_name] = []
             captions_dict[image_name].append(caption)
 
-        # Get the list of image IDs (filenames)
         image_ids = list(captions_dict.keys())
 
-        # Check if the specified image number is valid
         if 0 <= id < len(image_ids):
             image_id = image_ids[id]
-            captions = captions_dict[image_id]
-            
-            # Load and resize image
             image_file = os.path.join(image_dir, image_id)
             image = Image.open(image_file)
-            image_resized = image.resize((255, 255), Image.ANTIALIAS)  # Resize to 255x255
+            image_resized = image.resize((SAT_IMAGE_SIZE, SAT_IMAGE_SIZE), Image.ANTIALIAS)
             transform = transforms.Compose([transforms.ToTensor()])
             img = transform(image_resized)
-        if not before:
-            img = img / 255.
-            img = torch.FloatTensor(img).to(device)
-        
-            normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                            std=[0.229, 0.224, 0.225])
-            transform = transforms.Compose([normalize])
             
-            img = transform(img)  # (3, image_size, image_size)
-        # else:
-        #     img = torch.from_numpy(img)
+            if not before:
+                img = img / 255.
+                img = torch.FloatTensor(img).to(device)
+                normalize = transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
+                transform = transforms.Compose([normalize])
+                img = transform(img)
+    else:
+        raise ValueError(f"Unknown dataset: {dataset}")
 
     return img
 
-# Divide candidate to [[pixel_1], [pixel_2], [pixel_3]]
 
 def divide_list(lst, num_chunks=5):
-    '''
-    divide candidates by 5 (5 elelments each candidate)
-    '''
+    """
+    Divide a list into approximately equal chunks.
+    
+    Args:
+        lst: List to divide
+        num_chunks: Number of chunks to create
+        
+    Returns:
+        List of chunks
+    """
     chunk_size = len(lst) // num_chunks
     remainder = len(lst) % num_chunks
     result = []
     start = 0
+    
     for i in range(num_chunks):
         end = start + chunk_size
         if remainder > 0:
@@ -140,194 +190,236 @@ def divide_list(lst, num_chunks=5):
             remainder -= 1
         result.append(lst[start:end])
         start = end
+        
     return result
 
-# Save the perturbed image
+
 def save_image(id, pixels, figure, is_attention='att'):
-    '''
-    save image
-    '''
+    """
+    Save a perturbed image to disk.
+    
+    Args:
+        id: Image ID
+        pixels: Number of perturbed pixels
+        figure: Image tensor to save
+        is_attention: Label for attention mechanism used
+        
+    Returns:
+        Status string
+    """
+    ensure_dir_exists(BLIP_ATTACK_OUTPUT_DIR)
+    
     transform_toimage = transforms.ToPILImage()
     test_figure = transform_toimage(figure)
-    figure_ = test_figure.save('outputs/blip_flicker8k_1000p_100samples_overall_384_attacked/%d_%d_%s.jpg' %(id, pixels, is_attention))
+    output_path = BLIP_ATTACK_OUTPUT_DIR / f'{id}_{pixels}_{is_attention}.jpg'
+    test_figure.save(str(output_path))
 
     return 'saved'
+
 
 def save_raw_image(id):
-    image_384 = dataloader.get_item('coco', id, 384)[1]
+    """
+    Save raw image for demo/paper purposes.
+    
+    Args:
+        id: Image ID
+        
+    Returns:
+        Status string
+    """
+    ensure_dir_exists(OUT_DEMO_PAPER)
+    
+    image_384 = dataloader.get_item('coco', id, DEFAULT_IMAGE_SIZE)[1]
     transform_toimage = transforms.ToPILImage()
     test_figure = transform_toimage(image_384)
-    figure_ = test_figure.save('outputs/demo_paper/%d_raw_image.jpg' %(id))
+    output_path = OUT_DEMO_PAPER / f"{id}_raw_image.jpg"
+    test_figure.save(str(output_path))
+    
     return 'saved'
+
     
 def convert_to_preferred_format(sec):
-    '''
-    calculalte time cumsumption
-    '''
+    """
+    Convert seconds to HH:MM:SS format.
+    
+    Args:
+        sec: Number of seconds
+        
+    Returns:
+        Formatted time string
+    """
     sec = sec % (24 * 3600)
     hour = sec // 3600
     sec %= 3600
     min = sec // 60
     sec %= 60
-    return "%02d:%02d:%02d" % (hour, min, sec) 
+    return "%02d:%02d:%02d" % (hour, min, sec)
 
 
 def load_json(dir):
-    '''
-    load json
-    '''
-    file = open(dir, 'rb')
-    data = pickle.load(file)
-    file.close()
+    """
+    Load data from a pickle file.
+    
+    Args:
+        dir: File path
+        
+    Returns:
+        Loaded data
+    """
+    with open(dir, 'rb') as file:
+        data = pickle.load(file)
     return data
 
+
 def image_path(id, dataset='coco'):
-    '''
-    return image path
-    '''
-    if dataset=='coco':
-        folder_path = '/home/jiyli/Data/Image_Attack/data/train2014'
-        files = os.listdir(folder_path)
-        files = sorted(files)
-        return folder_path + '/' + str(files[id])
-    if dataset == 'flicker8k':
-        image_dir = '/home/jiyli/Data/Image_Attack/captionattack/Flicker8k_Dataset'
+    """
+    Get the file path for a specific image.
+    
+    Args:
+        id: Image ID/index
+        dataset: Dataset name ('coco' or 'flicker8k')
+        
+    Returns:
+        String path to image file
+    """
+    if dataset == 'coco':
+        folder_path = COCO_TRAIN_IMAGES_DIR
+        files = sorted(os.listdir(folder_path))
+        return str(folder_path / files[id])
+        
+    elif dataset == 'flicker8k':
+        image_dir = FLICKR8K_IMAGE_DIR
         image_filenames = sorted(os.listdir(image_dir))
         if 0 <= id < len(image_filenames):
             image_filename = image_filenames[id]
-            image_path = os.path.join(image_dir, image_filename)
-            return image_path
+            return str(image_dir / image_filename)
+    else:
+        raise ValueError(f"Unknown dataset: {dataset}")
+
 
 def filter_alphas():
-    '''
-    pick pixels from alphas
-    '''
-    # Convert the tensor to a numpy array
+    """
+    Process and save alpha values to file (legacy function).
+    """
     output_array = output_tensor.numpy()
 
-    # Define the file path
-    file_path = 'alphas.txt'
-
-    # Write the tensor to a text file
-    with open(file_path, 'w') as file:
-        # Iterate over each element in the array and write it to the file
+    with open(ALPHAS_FILE, 'w') as file:
         for row in output_array:
             for element in row:
                 file.write(str(element) + ' ')
             file.write('\n')
 
-    # Read the tensor data from the file
     output_data = []
-    with open(file_path, 'r') as file:
+    with open(ALPHAS_FILE, 'r') as file:
         lines = file.readlines()
-
-        # Convert the data to a tensor
         for line in lines:
             elements = line.strip().split(' ')
-            row = [float(element) for element in elements]
+            row = [float(element) for element in elements if element]
             output_data.append(row)
+            
     output_tensor = torch.tensor(output_data)
-    file.close()
-    # Print the tensor
     print(output_tensor)
-
-    pass
 
 
 def circle_area(image_path, pixel_coordinates, radius=10, outline_color=(255, 0, 0), outline_width=2):
-
-    # convert <best_pixels> to coordinates pairs
-    pixels = [(i[0], i[1]) for i in pixel_coordinates]
-    # Open the image
+    """
+    Draw circles around specified pixel coordinates on an image.
+    
+    Args:
+        image_path: Path to input image
+        pixel_coordinates: List of (x, y) tuples
+        radius: Circle radius (not used in current implementation)
+        outline_color: RGB tuple for circle color
+        outline_width: Width of circle outline
+        
+    Returns:
+        PIL Image with circles drawn
+    """
     image = Image.open(image_path)
-
-    # Create a new image with RGBA mode to support transparency
     circled_image = Image.new("RGBA", image.size)
     circled_image.paste(image, (0, 0))
-
-    # Create a draw object
     draw = ImageDraw.Draw(circled_image)
 
-    # Calculate the bounding box for the entire area defined by the pixel coordinates
     min_x = min(pixel_coordinates, key=lambda coord: coord[0])[0]
     min_y = min(pixel_coordinates, key=lambda coord: coord[1])[1]
     max_x = max(pixel_coordinates, key=lambda coord: coord[0])[0]
     max_y = max(pixel_coordinates, key=lambda coord: coord[1])[1]
     bbox = (min_x, min_y, max_x, max_y)
 
-    # Draw the circle outline
     draw.ellipse(bbox, outline=outline_color, width=outline_width)
 
     return circled_image
 
+
 def draw_multi_image(id):
+    """
+    Combine multiple attack result images into a single visualization.
+    
+    Args:
+        id: Image ID
+    """
+    ensure_dir_exists(OUT_SEPARATE_COMBINED)
+    
+    # Define image paths
+    image_paths = {
+        'separate': OUT_SEPARATE_TEST / f"{id}_separate.png",
+        'att_allin': OUT_SEPARATE_TEST / f"{id}_att_allin.png",
+        'att_sep': OUT_SEPARATE_TEST / f"{id}_att_sep.png",
+        'noatt': OUT_SEPARATE_TEST / f"{id}_noatt.png",
+        'allin': OUT_SEPARATE_TEST / f"{id}_allin.png"
+    }
+    
+    # Load images
+    images = {key: Image.open(path) for key, path in image_paths.items()}
+    
+    # Calculate combined image dimensions
+    width = max(
+        images['separate'].width + images['att_allin'].width,
+        images['att_sep'].width + images['noatt'].width
+    )
+    height = (images['separate'].height + images['att_sep'].height + 
+              max(images['att_allin'].height, images['noatt'].height) + 
+              images['allin'].height)
 
-    # Specify the paths to the individual image files
-    path1 = f'outputs/separate_test_500p_lm/{id}_separate.png'
-    path2 = f'outputs/separate_test_500p_lm/{id}_att_allin.png'
-    path3 = f'outputs/separate_test_500p_lm/{id}_att_sep.png'
-    path4 = f'outputs/separate_test_500p_lm/{id}_noatt.png'
-    path5 = f'outputs/separate_test_500p_lm/{id}_allin.png'
-    # Load the individual image files
-    image1 = Image.open(path1)
-    image2 = Image.open(path2)
-    image3 = Image.open(path3)
-    image4 = Image.open(path4)
-    image5 = Image.open(path5)
-    width = max(image1.width + image2.width, image3.width + image4.width)
-    height = image1.height + image3.height + max(image2.height, image4.height) + image5.height
-
-    # Create a new image file to combine the individual images
+    # Create combined image
     combined_image = Image.new('RGB', (width, height))
 
-    # Paste the individual images into the combined image file
-    combined_image.paste(image1, (0, 0))
-    combined_image.paste(image2, (image1.width, 0))
-    combined_image.paste(image3, (0, image1.height))
-    combined_image.paste(image4, (image3.width, image2.height))
-    combined_image.paste(image5, ((width - image5.width) // 2, image1.height + image3.height))
+    # Paste images
+    combined_image.paste(images['separate'], (0, 0))
+    combined_image.paste(images['att_allin'], (images['separate'].width, 0))
+    combined_image.paste(images['att_sep'], (0, images['separate'].height))
+    combined_image.paste(images['noatt'], (images['att_sep'].width, images['att_allin'].height))
+    combined_image.paste(images['allin'], 
+                        ((width - images['allin'].width) // 2, 
+                         images['separate'].height + images['att_sep'].height))
 
-    # Trim the excess white space
+    # Trim excess white space
     combined_image = combined_image.crop(combined_image.getbbox())
+    
+    # Create plot
     fig, ax = plt.subplots()
     ax.imshow(combined_image)
     ax.axis('off')
 
-    # Define the labels for each image
-    label1 = "separate"
-    label2 = "attention_all_in"
-    label3 = "attention_separate"
-    label4 = "no_attention"
-    label5 = 'allin'
-    label_x1 = image1.width // 2
-    label_x2 = image1.width + image2.width // 2
-    label_x3 = image3.width // 2
-    label_x4 = image3.width + image4.width // 2
-    label_x5 = image5.width // 2
-    label_y = height + 10
+    # Add labels
+    labels = {
+        'separate': (images['separate'].width // 2, height - images['att_sep'].height),
+        'att_allin': (images['separate'].width + images['att_allin'].width // 2, 
+                      height - images['att_allin'].height),
+        'att_sep': (images['att_sep'].width // 2, height),
+        'noatt': (images['att_sep'].width + images['noatt'].width // 2, height),
+        'allin': (images['allin'].width // 2, height)
+    }
+    
+    for label_text, (x, y) in labels.items():
+        ax.text(x, y + 10, label_text, ha='center')
 
-    ax.text(label_x1, label_y - image3.height, label1, ha='center')
-    ax.text(label_x2, label_y - image2.height, label2, ha='center')
-    ax.text(label_x3, label_y, label3, ha='center')
-    ax.text(label_x4, label_y, label4, ha='center')
-    ax.text(label_x5, label_y, label5, ha='center')
-
-    # Save the combined image file
-    plt.savefig(f'outputs/separate_combined_img/{id}.png', bbox_inches='tight', pad_inches=0)
+    # Save
+    output_path = OUT_SEPARATE_COMBINED / f"{id}.png"
+    plt.savefig(str(output_path), bbox_inches='tight', pad_inches=0)
     plt.close()
 
+
 if __name__ == '__main__':
-    # # dump_result = load_json('outputs/variation20_500-3000.json')
-    # # print(dump_result, len(dump_result[0]))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # print(load_image_for_sat(3, device=device, image_size=384, before=False))
-
-    # # Example usage
-    # image_path = "path/to/your/image.jpg"
-    # pixel_coordinates = [(100, 200), (300, 400), (500, 600)]
-    # circled_image = circle_area(image_path, pixel_coordinates)
-
-    # # Save the circled image
-    # circled_image.save("path/to/save/circled_image.jpg")
-    # print(load_image_for_sat(78, image_size=255, device=device, dataset='flicker8k'))
-    print(image_path(90,'flicker8k'))
+    print(image_path(90, 'flicker8k'))

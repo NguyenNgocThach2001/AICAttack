@@ -33,9 +33,9 @@ BLIP: https://github.com/salesforce/BLIP
 Secondly, the datasets are available at:
 
 COCO -- https://cocodataset.org/#home
+For COCO, download "2014 Train images" for images and "2014 Train/Val annotations" for anotations.
 
 Flickr8k -- https://www.kaggle.com/datasets/adityajn105/flickr8k
-
 Move data and model to the root directory.
 
 ## Evaluation

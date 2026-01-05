@@ -1,29 +1,32 @@
-import torch
 import json
 import pickle
 import random
-from torch import nn
-import torchvision
-from utils import *
-from coco import get_coco_dataset
 import sys
-sys.path.insert(1, 'models/show_attend_tell')
-from models import *
-from scipy.misc import imread, imresize
-from PIL import Image
-import torchvision.transforms as transforms
-import torch.nn.functional as F
-import matplotlib.cm as cm
-import matplotlib.pyplot as plt
-import numpy as np
-import skimage.transform
 import warnings
 from pathlib import Path
 
-# This code snippet requires a python 3.6 and pytorch 1.6 with torchvision 0.7.0
+import numpy as np
+import torch
+import torch.nn.functional as F
+import torchvision.transforms as transforms
+from PIL import Image
+from scipy.misc import imread, imresize
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-warnings.filterwarnings('ignore')
+import matplotlib.cm as cm
+import matplotlib.pyplot as plt
+import skimage.transform
+
+from utils import *  # expects image_path(id, dataset=...)
+
+# download the show and tell repo and put it in models/SAT
+sys.path.insert(1, "models/SAT")
+from models import *
+
+# This code snippet requires Python 3.6 and PyTorch 1.6 with torchvision 0.7.0
+
+#device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu")
+warnings.filterwarnings("ignore")
 
 CHECKPOINT_DIR = Path("checkpoint")
 CHECKPOINT_FILE = CHECKPOINT_DIR / "BEST_checkpoint_coco_5_cap_per_img_5_min_word_freq.pth.tar"
@@ -41,36 +44,27 @@ DEFAULT_ALPHA_SIZE = 384
 DEFAULT_SAMPLE_COUNT = 1000
 DEFAULT_SAMPLE_RANGE = 8000
 
-def caption_image_beam_search(
-    encoder,
-    decoder,
-    word_map,
-    image_path=None,
-    beam_size=DEFAULT_BEAM_SIZE,
-    image_size=DEFAULT_VISUALIZE_IMAGE_SIZE,
-):
 
+def caption_image_beam_search(encoder, decoder, word_map, image_path=None, beam_size=3):
     """
-    Reads an image and captions it with beam search.
+    Reads an image and captions it with beam search (ORIGINAL VERSION).
     :param encoder: encoder model
     :param decoder: decoder model
-    :param image: image of size (1, 3, 384, 384)
     :param image_path: path to image
     :param word_map: word map
     :param beam_size: number of sequences to consider at each decode-step
     :return: caption, weights for visualization
     """
-
     k = beam_size
     vocab_size = len(word_map)
 
-    # Read image and process
+    # Read image and process (ORIGINAL METHOD)
     if image_path:
         img = imread(image_path)
         if len(img.shape) == 2:
             img = img[:, :, np.newaxis]
             img = np.concatenate([img, img, img], axis=2)
-        img = imresize(img, (image_size, image_size))
+        img = imresize(img, (255, 255))
         img = img.transpose(2, 0, 1)
         img = img / 255.
         img = torch.FloatTensor(img).to(device)
@@ -186,19 +180,11 @@ def caption_image_beam_search(
     return seq, alphas
 
 
-def visualize_att(image_path, seq, alphas, rev_word_map, smooth=True):
+def visualize_att(image_path_str, seq, alphas, rev_word_map, smooth=True):
     """
     Visualizes caption with weights at every word.
-
-    Adapted from paper authors' repo: https://github.com/kelvinxu/arctic-captions/blob/master/alpha_visualization.ipynb
-
-    :param image_path: path to image that has been captioned
-    :param seq: caption
-    :param alphas: weights
-    :param rev_word_map: reverse word mapping, i.e. ix2word
-    :param smooth: smooth weights?
     """
-    image = Image.open(image_path)
+    image = Image.open(image_path_str).convert("RGB")
     image = image.resize(
         [DEFAULT_VIS_GRID_SIZE * DEFAULT_VIS_UPSCALE, DEFAULT_VIS_GRID_SIZE * DEFAULT_VIS_UPSCALE],
         Image.LANCZOS,
@@ -206,13 +192,15 @@ def visualize_att(image_path, seq, alphas, rev_word_map, smooth=True):
 
     words = [rev_word_map[ind] for ind in seq]
 
+    plt.figure(figsize=(15, 15))
     for t in range(len(words)):
         if t > DEFAULT_MAX_CAPTION_LENGTH:
             break
-        plt.subplot(np.ceil(len(words) / 5.0), 5, t + 1)
 
-        plt.text(0, 1, '%s' % (words[t]), color='black', backgroundcolor='white', fontsize=12)
+        plt.subplot(int(np.ceil(len(words) / 5.0)), 5, t + 1)
+        plt.text(0, 1, f"{words[t]}", color="black", backgroundcolor="white", fontsize=12)
         plt.imshow(image)
+
         current_alpha = alphas[t, :]
         if smooth:
             alpha = skimage.transform.pyramid_expand(
@@ -225,95 +213,180 @@ def visualize_att(image_path, seq, alphas, rev_word_map, smooth=True):
                 current_alpha.numpy(),
                 [DEFAULT_VIS_GRID_SIZE * DEFAULT_VIS_UPSCALE, DEFAULT_VIS_GRID_SIZE * DEFAULT_VIS_UPSCALE],
             )
+
         if t == 0:
             plt.imshow(alpha, alpha=0)
         else:
             plt.imshow(alpha, alpha=0.8)
+
         plt.set_cmap(cm.Greys_r)
-        plt.axis('off')
+        plt.axis("off")
+
     FIGURE_DIR.mkdir(parents=True, exist_ok=True)
+    plt.tight_layout()
     plt.savefig(FIGURE_DIR / "attention_1.png")
+    plt.close()
 
-def get_alphas(id, dataset='coco'):
-    """
-    Call the pretrained 'Show and tell' model for attention value
-    return predicted captions and alphas value corresponding to every words
-    """
-    checkpoint = torch.load(CHECKPOINT_FILE, map_location=str(device))
-    decoder = checkpoint['decoder']
-    decoder = decoder.to(device)
-    decoder.eval()
-    encoder = checkpoint['encoder']
-    encoder = encoder.to(device)
-    encoder.eval()
 
-    with open(WORDMAP_FILE, 'r') as j:
-        word_map = json.load(j)
-    rev_word_map = {v: k for k, v in word_map.items()}  # ix2word
+@torch.no_grad()
+def get_alphas_with_loaded(
+    img_id,
+    encoder,
+    decoder,
+    word_map,
+    rev_word_map,
+    dataset="coco",
+):
+    """
+    Use already-loaded encoder/decoder/wordmap.
+    Return:
+      alpha_resized: (T, DEFAULT_ALPHA_SIZE, DEFAULT_ALPHA_SIZE) tensor on CPU
+      words: list[str]
+    """
+    img_path = image_path(img_id, dataset=dataset)
+
+    # Fail fast if missing
+    if not Path(img_path).exists():
+        raise FileNotFoundError(img_path)
 
     seq, alphas = caption_image_beam_search(
         encoder,
         decoder,
         word_map,
-        image_path=image_path(id, dataset=dataset),
+        image_path=img_path,
         beam_size=DEFAULT_BEAM_SIZE,
     )
+
+    # alphas: list -> tensor
     alphas = torch.FloatTensor(alphas)
-    alphas = alphas[1:-1 : ]
-    # i = skimage.transform.resize(alphas[2].numpy(), [384, 384])
+
+    # Remove <start> and <end> to align with words
+    alphas = alphas[1:-1]
+
+    # Resize attention maps to DEFAULT_ALPHA_SIZE
     alpha_resized = F.interpolate(
         alphas.unsqueeze(0),
         size=(DEFAULT_ALPHA_SIZE, DEFAULT_ALPHA_SIZE),
-        mode='bilinear',
-    ).squeeze()
-    # alpha = skimage.transform.resize(current_alpha.numpy(), [14 * 24, 14 * 24])
-    # Get words:
-    words = [rev_word_map[ind] for ind in seq]
-    words = words[1:-1]
-    return alpha_resized, words
+        mode="bilinear",
+    ).squeeze(0)
+
+    words = [rev_word_map[ind] for ind in seq][1:-1]
+    return alpha_resized.cpu(), words
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
+    print("=" * 60)
+    print("Image Captioning with Attention - Starting...")
+    print("=" * 60)
 
-  
-    # Visualise attention.
-    checkpoint = torch.load(CHECKPOINT_FILE, map_location=str(device))
-    decoder = checkpoint['decoder']
-    decoder = decoder.to(device)
-    decoder.eval()
-    encoder = checkpoint['encoder']
-    encoder = encoder.to(device)
-    encoder.eval()
+    dataset_name = "flicker8k"
+    processed_count = 0
 
-    # Load word map (word2ix)
-    with open(WORDMAP_FILE, 'r') as j:
-        word_map = json.load(j)
-    rev_word_map = {v: k for k, v in word_map.items()}  # ix2word
+    try:
+        print(f"\n🖥️  device: {device}")
 
-    # Encode, decode with attention and beam search
-    # seq, alphas = caption_image_beam_search(encoder, decoder, image_path(7), word_map, beam_size=5)
-    # alphas = torch.FloatTensor(alphas)
+        # Load models ONCE
+        print("\n📦 Loading models (once)...")
+        checkpoint = torch.load(CHECKPOINT_FILE, map_location=str(device))
 
-    # Visualize caption and attention of best sequence
-    # visualize_att(image_path(7), seq, alphas, rev_word_map, smooth=False)
-   
+        decoder = checkpoint["decoder"].to(device).eval()
+        encoder = checkpoint["encoder"].to(device).eval()
+        print("✓ Models loaded successfully")
 
-    num_samples = DEFAULT_SAMPLE_COUNT
-    attens = []
-    random.seed(42)
-    dataset_name = 'coco'
-    ids = random.sample(range(DEFAULT_SAMPLE_RANGE), num_samples)
-    for i in ids:
-        attens.append((i, get_alphas(i, dataset=dataset_name)))
-        print(f'No.{i}')
-    # Open the file in write mode
-    output_filename = (
-        f"attens_{dataset_name}_{num_samples}_samples_{DEFAULT_ALPHA_SIZE}.json"
-    )
-    with open(output_filename, "wb") as file:
-        # Write the data to the file
-        pickle.dump(attens, file)
+        # Load word map ONCE
+        print("\n📖 Loading word map...")
+        with open(WORDMAP_FILE, "r") as j:
+            word_map = json.load(j)
+        rev_word_map = {v: k for k, v in word_map.items()}
+        print("✓ Word map loaded successfully")
 
-    # a = get_alphas(90)
-    # print(a[0].size())
-    # print(a[1])
+        # Sampling
+        num_samples = DEFAULT_SAMPLE_COUNT
+        random.seed(42)
+        ids = random.sample(range(DEFAULT_SAMPLE_RANGE), num_samples)
+
+        # Prepare output file
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        output_filename = OUTPUT_DIR / f"attens_{dataset_name}_{num_samples}_samples_{DEFAULT_ALPHA_SIZE}.pkl"
+        
+        print(f"\n🎯 Processing {num_samples} images from {dataset_name} dataset")
+        print(f"📝 Writing results to: {output_filename}")
+        print(f"Selected IDs: {ids[:10]}..." if len(ids) > 10 else f"Selected IDs: {ids}")
+        print("-" * 60)
+
+        # Collect all results first
+        attens = []
+        
+        for idx, img_id in enumerate(ids):
+            try:
+                print(f"\n[{idx+1}/{num_samples}] Processing image ID: {img_id}...", end=" ", flush=True)
+                alpha_resized, words = get_alphas_with_loaded(
+                    img_id,
+                    encoder,
+                    decoder,
+                    word_map,
+                    rev_word_map,
+                    dataset=dataset_name,
+                )
+                
+                # Collect result
+                attens.append((img_id, (alpha_resized, words)))
+                processed_count += 1
+
+                caption = " ".join(words)
+                print("✓")
+                print(f'  Caption: "{caption}"')
+                
+                # Clean GPU memory
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+            except FileNotFoundError as e:
+                print("✗ Image not found")
+                print(f"  Error: {e}")
+                continue
+            except KeyboardInterrupt:
+                print("\n\n⚠️  Interrupted by user!")
+                raise
+            except Exception as e:
+                print("✗ Failed")
+                print(f"  Error: {e}")
+                continue
+
+        # Write all results at once
+        if processed_count > 0:
+            print(f"\n💾 Writing {processed_count} results to file...", end=" ", flush=True)
+            with open(output_filename, "wb") as file:
+                pickle.dump(attens, file)
+            print("✓")
+
+        # Final summary
+        print("\n" + "=" * 60)
+        if processed_count > 0:
+            print(f"✓ Successfully saved {processed_count} results to:")
+            print(f"  {output_filename}")
+            print("\n📊 Summary:")
+            print(f"  - Total processed: {processed_count}/{num_samples}")
+            print(f"  - Success rate: {processed_count/num_samples*100:.1f}%")
+        else:
+            print("⚠️  No results to save - all images failed!")
+
+        print("=" * 60)
+        print("✓ Processing complete!")
+
+    except KeyboardInterrupt:
+        print("\n\n⚠️  Interrupted by user!")
+        if processed_count > 0:
+            # Save partial results
+            print(f"\n💾 Saving {processed_count} partial results...", end=" ", flush=True)
+            with open(output_filename, "wb") as file:
+                pickle.dump(attens, file)
+            print("✓")
+            print(f"Saved to: {output_filename}")
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"\n\n❌ Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
