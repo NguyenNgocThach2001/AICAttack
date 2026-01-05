@@ -1,7 +1,7 @@
-data/coco/annotations/*
-data/coco/images/*
+data/coco/annotations/
+data/coco/images/
 data/flickr8k/
-models/SAT/*
+models/SAT/
 outputs/attens_flicker8k_1000_samples_384.pkl 
 outputs/predicted_captions.csv
 checkpoint/*
